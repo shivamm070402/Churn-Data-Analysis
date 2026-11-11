@@ -11,6 +11,14 @@
 
 ---
 
+## 📐 System Design
+
+![System Design](screenshots/08_system_design.png)
+
+> Interactive version → open [`system_design.excalidraw`](system_design.excalidraw) at **[excalidraw.com](https://excalidraw.com)** · drag & drop the file to edit
+
+---
+
 ## 🗺️ Database Design
 
 ![Database Design](screenshots/07_database_design.png)
