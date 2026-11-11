@@ -11,6 +11,15 @@
 
 ---
 
+## 🗺️ Database Design
+
+![Database Design](screenshots/07_database_design.png)
+
+> Full DBML source → [`database_design.dbml`](database_design.dbml)  
+> Paste it at **[dbdiagram.io](https://dbdiagram.io)** to get the interactive version.
+
+---
+
 ## 🖼️ Dashboard Preview
 
 ### KPI Strip

@@ -1,0 +1,120 @@
+// ============================================================
+// Customer Churn Analysis — Database Design
+// Tool: dbdiagram.io  (paste this file at https://dbdiagram.io)
+// Source: customer_churn.db  (SQLite)
+// ============================================================
+
+Project CustomerChurnAnalysis {
+  database_type: 'SQLite'
+  Note: '''
+    Customer Churn Analysis database for a subscription-based business.
+    Three tables store customer demographics, subscription details,
+    and support interactions. The customerid field is the shared key
+    that links all three tables.
+  '''
+}
+
+// ─────────────────────────────────────────────────
+// TABLE 1: Customer Demographics
+// ─────────────────────────────────────────────────
+Table db_customer {
+  customerid          varchar   [pk, not null, note: 'Unique customer ID  e.g. 0002-ORFBO']
+  name                varchar   [not null,     note: 'Customer full name (renamed to customer_name in pipeline)']
+  country             varchar   [null,         note: '3 nulls filled via state→country mapping in cleaning']
+  state               varchar   [not null,     note: 'Indian state or city (e.g. Maharashtra, Kathmandu)']
+  gender              varchar   [not null,     note: 'Male / Female — standardised from Men/Women in cleaning']
+  dob                 timestamp [not null,     note: 'Date of birth — used to calculate customer_age']
+  interests           varchar   [null,         note: 'DROPPED in cleaning — 17 of 21 rows are null']
+  pincode             real      [null,         note: 'DROPPED in cleaning — all 21 rows are null']
+
+  Note: '''
+    Raw customer demographics table.
+    Cleaning steps applied:
+      • Rename name → customer_name
+      • Drop interests, pincode (too sparse)
+      • Cast dob to datetime
+      • Standardise gender: Men→Male, Women→Female
+      • Fill 3 missing country values using state→country mapping
+  '''
+}
+
+// ─────────────────────────────────────────────────
+// TABLE 2: Subscription Details
+// ─────────────────────────────────────────────────
+Table db_subscription {
+  customerid           varchar  [pk, ref: > db_customer.customerid, not null, note: 'FK → db_customer.customerid']
+  subscription_start_date  varchar  [not null,  note: 'Date subscription began — cast to datetime in cleaning']
+  subscription_type    varchar  [not null,      note: 'Acquisition channel: Organic | Paid | Refferal']
+  renewal_date         varchar  [not null,      note: 'Next renewal date — cast to datetime in cleaning']
+  plan_type            varchar  [not null,      note: 'Tier: Basic | Standard | Premium']
+  contract_type        varchar  [not null,      note: 'Billing cycle: Monthly | Annual']
+  cancellation_date    varchar  [null,          note: 'NULL = active customer. Cast to datetime in cleaning']
+  cancellation_reason  varchar  [null,          note: 'Free-text reason: Too expensive | Switched to competitor | ...']
+  monthly_charges      real     [not null,      note: 'Monthly billing amount in INR (₹6.99 – ₹22.99)']
+  cltv                 integer  [not null,      note: 'Customer Lifetime Value score (195 – 1725)']
+  churn_score          integer  [not null,      note: 'Propensity to churn score (0–100). Bucketed into churn_risk']
+
+  Note: '''
+    Core subscription table — 1 row per customer.
+    Engineered features derived from this table:
+      • churn_flag     = 1 if cancellation_date IS NOT NULL else 0
+      • tenure_days    = cancellation_date - subscription_start_date
+                         (or today - subscription_start_date for active)
+      • churn_risk     = low  (churn_score < 50)
+                         med  (churn_score 50–69)
+                         high (churn_score >= 70)
+  '''
+}
+
+// ─────────────────────────────────────────────────
+// TABLE 3: Customer Support Interactions
+// ─────────────────────────────────────────────────
+Table db_support {
+  customerid      varchar   [ref: > db_customer.customerid, not null, note: 'FK → db_customer.customerid (non-unique — 1 customer can have multiple rows)']
+  complaint_date  timestamp [not null, note: 'Date complaint was filed — cast to datetime in cleaning']
+  escalations     varchar   [not null, note: 'Was complaint escalated? Y | N — encoded to escalation_flag (1/0)']
+  csat_score      integer   [not null, note: 'Customer Satisfaction Score (0–100). Lower = more dissatisfied']
+  col_1           real      [null,     note: 'DROPPED in cleaning — all rows are null (junk column)']
+  comment         varchar   [null,     note: 'DROPPED in cleaning — free-text comment (mostly null)']
+
+  Note: '''
+    Support interaction log — can have MULTIPLE rows per customer.
+    9 total rows across 7 unique customers.
+    Cleaning steps applied:
+      • Drop col_1 and comment (too sparse / irrelevant)
+      • Cast complaint_date to datetime
+      • Add complaint_count via groupby transform (before dedup)
+      • Sort by complaint_date, keep LAST complaint per customerid (dedup)
+    Engineered features:
+      • complaint_count  = total complaints per customer (before dedup)
+      • escalation_flag  = 1 if escalations == 'Y' else 0
+  '''
+}
+
+// ─────────────────────────────────────────────────
+// RELATIONSHIPS
+// ─────────────────────────────────────────────────
+// db_subscription.customerid  >  db_customer.customerid   (many-to-one)
+// db_support.customerid       >  db_customer.customerid   (many-to-one)
+//
+// Merge strategy used in pipeline:
+//   df = db_subscription
+//          .merge(db_customer, on='customerid', how='LEFT')
+//          .merge(db_support,  on='customerid', how='LEFT')
+//
+// Result: Master DataFrame  21 rows × 24 columns
+// ─────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────
+// DERIVED / ENGINEERED COLUMNS (not in DB, added in pipeline)
+// ─────────────────────────────────────────────────
+Table derived_features {
+  churn_flag        integer  [note: '1=Churned 0=Active — from cancellation_date NOT NULL']
+  tenure_days       integer  [note: 'Days as subscriber — cancel_date or today minus start_date']
+  customer_age      integer  [note: 'Age in completed years — today minus dob']
+  escalation_flag   integer  [note: '1=Escalated 0=Not — encoded from escalations Y/N']
+  complaint_count   integer  [note: 'Total complaints per customer — groupby count before dedup']
+  churn_risk        varchar  [note: 'Bucket: low (<50) | med (50-69) | high (>=70) from churn_score']
+
+  Note: 'These columns are computed in the Pandas pipeline, not stored in SQLite'
+}
